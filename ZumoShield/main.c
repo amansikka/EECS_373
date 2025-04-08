@@ -44,7 +44,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 
-UART_HandleTypeDef huart6;
+UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
 
@@ -56,17 +56,89 @@ static void MX_GPIO_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_TIM2_Init(void);
-static void MX_USART6_UART_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+uint8_t rxData[2];
+
 void SetDutyCycle(uint8_t input){
 	uint32_t duty_cycle = (input * (99 + 1)) / 100;
 	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, duty_cycle);
 	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, duty_cycle);
+}
+
+void ProcessCommand(void)
+{
+    // Receive 2 bytes via UART (adjust timeout as needed)
+    // Note: Make sure to use the correct UART handle (here using huart2)
+    if (HAL_UART_Receive(&huart2, rxData, 2, 100) == HAL_OK)
+    {
+        // Combine two 8-bit values into one 16-bit command word.
+        uint16_t commandWord = ((uint16_t)rxData[0] << 8) | rxData[1];
+
+        // Parse the fields:
+        // Bits 15-14 for mode, bits 13-7 for motor speed, bits 6-0 for kick speed.
+        uint8_t mode       = (commandWord >> 14) & 0x03;
+        uint8_t motorSpeed = (commandWord >> 7)  & 0x7F;
+        uint8_t kickSpeed  = commandWord         & 0x7F;
+
+        // Clamp the speeds to a maximum of 100.
+        if(motorSpeed > 100)
+        {
+            motorSpeed = 100;
+        }
+        if(kickSpeed > 100)
+        {
+            kickSpeed = 100;
+        }
+
+        // Process the command based on the mode.
+        switch(mode)
+        {
+            case 0: // 00: Left
+                // For a left turn, you may choose to have one motor set to go slower or even reverse.
+                // Here, we set both motors to the received speed,
+                // then set one of the motor directions differently.
+                SetDutyCycle(motorSpeed);  // sets the PWM duty cycle on TIM3 and TIM4
+                // Example: left motor reverse, right motor forward.
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET); // M2DIR: set for reverse
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET);     // M1DIR: set for forward
+                break;
+
+            case 1: // 01: Right
+                SetDutyCycle(motorSpeed);
+                // Example: left motor forward, right motor reverse.
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);     // M2DIR: forward
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);   // M1DIR: reverse
+                break;
+
+            case 2: // 10: Forward
+                SetDutyCycle(motorSpeed);
+                // Both motors forward.
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);     // M2DIR: forward
+                HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET);     // M1DIR: forward
+                break;
+
+            case 3: // 11: Celebrate
+                // Celebrate might involve stopping the motors and playing a buzzer sound.
+                // Here we set motor PWM to 0 (or stop motors) and use TIM2 PWM for the buzzer.
+                SetDutyCycle(0); // Stop motor movement.
+                // Use the kickSpeed value to modulate the buzzer PWM duty cycle.
+                // You can adjust the scaling if necessary.
+                __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, kickSpeed);
+                // Optionally add further visual effects (e.g., blinking an LED) here.
+                break;
+
+            default:
+                // If an undefined mode is received, you may choose to set a safe state.
+                SetDutyCycle(0);
+                break;
+        }
+    }
 }
 
 
@@ -105,19 +177,20 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM4_Init();
   MX_TIM2_Init();
-  MX_USART6_UART_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  	HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
-    HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+  HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_2);
     /* USER CODE BEGIN 2 */
 
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET); // M2DIR
-    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); // M1DIR
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET); // M2DIR
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); // M1DIR
 
 
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 50);
-    __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 50);
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 50);
+  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 50);
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -127,10 +200,7 @@ int main(void)
     while (1)
       {
     /* USER CODE END WHILE */
-    	 for(int i = 0; i < 100; i++){
-    	  		 SetDutyCycle(i);
-    	  		 HAL_Delay(100);
-    	 } // Update every 100ms
+    	 ProcessCommand();
     /* USER CODE BEGIN 3 */
       }
   /* USER CODE END 3 */
@@ -350,35 +420,35 @@ static void MX_TIM4_Init(void)
 }
 
 /**
-  * @brief USART6 Initialization Function
+  * @brief USART2 Initialization Function
   * @param None
   * @retval None
   */
-static void MX_USART6_UART_Init(void)
+static void MX_USART2_UART_Init(void)
 {
 
-  /* USER CODE BEGIN USART6_Init 0 */
+  /* USER CODE BEGIN USART2_Init 0 */
 
-  /* USER CODE END USART6_Init 0 */
+  /* USER CODE END USART2_Init 0 */
 
-  /* USER CODE BEGIN USART6_Init 1 */
+  /* USER CODE BEGIN USART2_Init 1 */
 
-  /* USER CODE END USART6_Init 1 */
-  huart6.Instance = USART6;
-  huart6.Init.BaudRate = 9600;
-  huart6.Init.WordLength = UART_WORDLENGTH_8B;
-  huart6.Init.StopBits = UART_STOPBITS_1;
-  huart6.Init.Parity = UART_PARITY_NONE;
-  huart6.Init.Mode = UART_MODE_TX_RX;
-  huart6.Init.HwFlowCtl = UART_HWCONTROL_NONE;
-  huart6.Init.OverSampling = UART_OVERSAMPLING_16;
-  if (HAL_UART_Init(&huart6) != HAL_OK)
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
   {
     Error_Handler();
   }
-  /* USER CODE BEGIN USART6_Init 2 */
+  /* USER CODE BEGIN USART2_Init 2 */
 
-  /* USER CODE END USART6_Init 2 */
+  /* USER CODE END USART2_Init 2 */
 
 }
 
@@ -407,14 +477,6 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : USART_TX_Pin USART_RX_Pin */
-  GPIO_InitStruct.Pin = USART_TX_Pin|USART_RX_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF7_USART2;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : PA8 PA9 */
   GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
