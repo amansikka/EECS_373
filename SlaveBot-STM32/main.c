@@ -71,6 +71,21 @@ void SetDutyCycle(uint8_t input){
 	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, duty_cycle);
 }
 
+void Celebrate(uint8_t motorSpeed)
+{
+    // Set both motors to the same speed
+    SetDutyCycle(motorSpeed);
+
+    // Spin in place: one forward, one reverse
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET); // M2DIR: reverse
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET);   // M1DIR: forward
+
+    HAL_Delay(6000); // spin for 6 seconds
+
+    // Stop motors after celebration
+    SetDutyCycle(0);
+}
+
 void ProcessCommand(void)
 {
     // Receive 2 bytes via UART (adjust timeout as needed)
@@ -91,7 +106,7 @@ void ProcessCommand(void)
         {
             motorSpeed = 100;
         }
-        //KickFlag is a binary value
+      
 
         // Process the command based on the mode.
         switch(mode)
@@ -123,10 +138,12 @@ void ProcessCommand(void)
             case 3: // 11: Celebrate
                 // Celebrate might involve stopping the motors and playing a buzzer sound.
                 // Here we set motor PWM to 0 (or stop motors) and use TIM2 PWM for the buzzer.
-                SetDutyCycle(0); // Stop motor movement.
+                Celebrate(motorSpeed); // Stop motor movement.
                 // Use the kickSpeed value to modulate the buzzer PWM duty cycle.
                 // You can adjust the scaling if necessary.
-                __HAL_TIM_SET_COMPARE(&htim2, TIM_CHANNEL_2, kickSpeed);
+                
+                //use a motor Celebrate helper function
+
                 // Optionally add further visual effects (e.g., blinking an LED) here.
                 break;
 
@@ -135,7 +152,13 @@ void ProcessCommand(void)
                 SetDutyCycle(0);
                 break;
         }
-    }
+        //we have the motorSpeed part working with the direction 
+
+        //However we need to add drivers to set the kickFlag below 
+        //KickFlag is a binary value
+        
+      }
+
 }
 
 
