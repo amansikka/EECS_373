@@ -84,17 +84,14 @@ void ProcessCommand(void)
         // Bits 15-14 for mode, bits 13-7 for motor speed, bits 6-0 for kick speed.
         uint8_t mode       = (commandWord >> 14) & 0x03;
         uint8_t motorSpeed = (commandWord >> 7)  & 0x7F;
-        uint8_t kickSpeed  = commandWord         & 0x7F;
+        uint8_t kickFlag = (commandWord >> 6) & 0x01;  // 1-bit flag at bit 6
 
         // Clamp the speeds to a maximum of 100.
         if(motorSpeed > 100)
         {
             motorSpeed = 100;
         }
-        if(kickSpeed > 100)
-        {
-            kickSpeed = 100;
-        }
+        //KickFlag is a binary value
 
         // Process the command based on the mode.
         switch(mode)
