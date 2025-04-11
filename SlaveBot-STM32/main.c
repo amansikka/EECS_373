@@ -100,16 +100,22 @@ void ProcessCommand(void)
         uint8_t mode       = (commandWord >> 14) & 0x03;
         uint8_t motorSpeed = (commandWord >> 7)  & 0x7F;
         uint8_t kickFlag = (commandWord >> 6) & 0x01;  // 1-bit flag at bit 6
+        motorSpeed = 100;
+        uint16_t testdirection = commandWord;
+
+        // test packet
+
+
 
         // Clamp the speeds to a maximum of 100.
         if(motorSpeed > 100)
         {
             motorSpeed = 100;
         }
-      
+1`
 
         // Process the command based on the mode.
-        switch(mode)
+        switch(testdirection) // change back to mode after testing
         {
             case 0: // 00: Left
                 // For a left turn, you may choose to have one motor set to go slower or even reverse.
@@ -141,7 +147,7 @@ void ProcessCommand(void)
                 Celebrate(motorSpeed); // Stop motor movement.
                 // Use the kickSpeed value to modulate the buzzer PWM duty cycle.
                 // You can adjust the scaling if necessary.
-                
+
                 //use a motor Celebrate helper function
 
                 // Optionally add further visual effects (e.g., blinking an LED) here.
@@ -152,11 +158,11 @@ void ProcessCommand(void)
                 SetDutyCycle(0);
                 break;
         }
-        //we have the motorSpeed part working with the direction 
+        //we have the motorSpeed part working with the direction
 
-        //However we need to add drivers to set the kickFlag below 
+        //However we need to add drivers to set the kickFlag below
         //KickFlag is a binary value
-        
+
       }
 
 }
