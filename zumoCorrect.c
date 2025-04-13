@@ -46,9 +46,12 @@ TIM_HandleTypeDef htim4;
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
-void SetDutyCycle(uint8_t input){
-	uint32_t duty_cycle = (input * (99 + 1)) / 100;
+void SetDutyCycleRight(uint8_t input){
+	uint32_t duty_cycle = ((input*100 / 64) * (99 + 1)) / 100;
 	__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, duty_cycle);
+}
+void SetDutyCycleLeft(uint8_t input){
+	uint32_t duty_cycle = ((input*100 / 64) * (99 + 1)) / 100;
 	__HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, duty_cycle);
 }
 /* USER CODE END PV */
@@ -103,31 +106,53 @@ int main(void)
   /* USER CODE BEGIN 2 */
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
   HAL_TIM_PWM_Start(&htim4, TIM_CHANNEL_1);
-
+  //GPIO_PIN_8 = RIGHT
+  //GPIO_PIN_9 = LEFT
+  //TIMER 3 = RIGHT
+  //TIMER 4 = LEFT
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET); // M2DIR
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET); // M1DIR
 
-  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_2, 50);
-  __HAL_TIM_SET_COMPARE(&htim4, TIM_CHANNEL_1, 50);
   /* USER CODE END 2 */
-
+  
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-  while (1)
-        {
-        /* USER CODE END WHILE */
-
-    	 for(int i = 0; i < 100; i++){
-    		 SetDutyCycle(i);
-    		 HAL_Delay(100);
-    	 } // Update every 100ms
-    	 for(int i = 100; i > 1; i--){
-    	     		 SetDutyCycle(i);
-    	     		 HAL_Delay(100);
-    	     	 }
-        /* USER CODE BEGIN 3 */
-        }
-  /* USER CODE END 3 */
+  while (1){
+    int directionSwitch = 0;
+    //uint8_t data = rxData[0];  
+    //uint8_t switch = data & 0x3;
+    //uint8_t magnitude = (data >> 2) & 0x3F;
+    uint8_t magnitude = 50;
+    if(directionSwitch == 0){
+      //Forward
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET);
+      SetDutyCycleLeft(magnitude);
+      SetDutyCycleRight(magnitude);
+    }
+    else if(directionSwitch == 1){
+      //Left
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_RESET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_SET);
+      SetDutyCycleLeft(magnitude);
+      SetDutyCycleRight(magnitude);      
+    }
+    else if(directionSwitch == 2){
+      //Right
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);
+      SetDutyCycleLeft(magnitude);
+      SetDutyCycleRight(magnitude);
+    }
+    else if(directionSwitch == 3){
+      //Celebrate
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_8, GPIO_PIN_SET);
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_9, GPIO_PIN_RESET);
+      SetDutyCycleLeft(magnitude);
+      SetDutyCycleRight(magnitude);
+      HAL_Delay(6000);
+    }
+  }
 }
 
 /**
