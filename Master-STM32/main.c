@@ -1,78 +1,55 @@
 /* USER CODE BEGIN Header */
-
 /**
-
   ******************************************************************************
-
   * @file           : main.c
-
   * @brief          : Main program body
-
   ******************************************************************************
-
   * @attention
-
   *
-
   * Copyright (c) 2025 STMicroelectronics.
-
   * All rights reserved.
-
   *
-
   * This software is licensed under terms that can be found in the LICENSE file
-
   * in the root directory of this software component.
-
   * If no LICENSE file comes with this software, it is provided AS-IS.
-
   *
-
   ******************************************************************************
-
   */
-
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
-#define SAD_M_R 0x3D
-
-#define SAD_M_W 0x3C
-
-#define SAD_A_R 0x32
-
-#define SAD_A_W 0x33
-
-#define ADC_MAX_VALUE 4095
-
-//#define ADC_MIN_VALUE 1000
-
-
-
+#include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 
-
-
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+//#define DEBUG
+// IMU Registers
+#define SAD_M_R 0x3D
+#define SAD_M_W 0x3C
+#define SAD_A_R 0x32
+#define SAD_A_W 0x33
+// Flex ADC
+#define ADC_MAX_VALUE 4095
 
-
-
+// linear scaling test
+#define RAW_MIN 80
+#define RAW_MAX 100
+#define SCALE_MIN 1
+#define SCALE_MAX 100
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
-
 
 /* USER CODE END PM */
 
@@ -85,175 +62,191 @@ I2C_HandleTypeDef hi2c2;
 UART_HandleTypeDef hlpuart1;
 UART_HandleTypeDef huart5;
 UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-
-
-
+HAL_StatusTypeDef ret;
+// IMU Vars
+int bDir;
+int16_t bRx, bRy, bRz;
+int yDir;
+int16_t yRx, yRy, yRz;
+// Flex Vars
+uint32_t bFlexRaw1, bFlexRaw2;
+uint32_t yFlexRaw1, yFlexRaw2;
+int bMag, bBoost;
+uint32_t yFlexRaw;
+int yMag, yBoost;
+// Pixycam variables
+uint8_t Pixy_receive;
+//boost sensor variables
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_ADC1_Init(void);
-static void MX_I2C1_Init(void);
 static void MX_LPUART1_UART_Init(void);
+static void MX_I2C1_Init(void);
 static void MX_I2C2_Init(void);
-static void MX_UART5_Init(void);
+static void MX_ADC1_Init(void);
 static void MX_USART2_UART_Init(void);
+static void MX_USART3_UART_Init(void);
+static void MX_UART5_Init(void);
 /* USER CODE BEGIN PFP */
-
-
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+void IMU_Init(void)
+{
+  uint8_t initData[10] = {0x0A};
+  initData[0] = 0x20;
+  initData[1] = 0x97;
 
-uint16_t map_adc_to_flex_value(uint32_t adc_value) {
-
-
-
-	uint16_t flex_value = ((adc_value * 100) / ADC_MAX_VALUE);
-
-
-
-    if (flex_value < 1) flex_value = 1;
-
-
-
-    else if (flex_value > 100) flex_value = 100;
-
-
-
-    return flex_value;
-
-
-
+  // BLUE
+  ret = HAL_I2C_Master_Transmit(&hi2c1, SAD_A_W, &initData[0], 2, 1000);
+  // YELLOW
+  ret = HAL_I2C_Master_Transmit(&hi2c2, SAD_A_W, &initData[0], 2, 1000);
 }
 
-
-
-uint16_t refine_value(uint16_t old_value){
-
-
-
-	uint16_t min = 30;
-
-	uint16_t max = 75;
-
-	uint16_t new = 0;
-
-
-
-	if (old_value < min){
-
-		return new;
-
-	}
-
-	else if (old_value > max){
-
-		new = 100;
-
-		return new;
-
-	}
-
-	else {
-
-		new = 100 * (old_value / 75);
-
-		return new;
-
-	}
-
-
-
+int IMU_Direction(int16_t x)
+{
+  if (x > 5000)
+  {
+	return 0; // left
+  } else if (x < -5000)
+  {
+	return 1; // right
+  } else
+  {
+	return 2; // straight
+  }
 }
 
+void IMU_Read(void)
+{
+  // BLUE
+  uint8_t bData[10] = {0x0A};
+  bData[0] = 0xA8;
+  ret = HAL_I2C_Master_Transmit(&hi2c1, SAD_A_W, &bData[0], 1, 1000);
+  ret = HAL_I2C_Master_Receive(&hi2c1, SAD_A_R, &bData[0], 6, 1000);
 
+  bRx = ((int16_t)(bData[1] << 8) + (int16_t)bData[0]);
+  bRy = ((int16_t)(bData[3] << 8) + (int16_t)bData[2]);
+  bRz = ((int16_t)(bData[5] << 8) + (int16_t)bData[4]);
 
+  bDir = IMU_Direction(bRx);
 
+  printf("x raw value: %d\n", bRx);
+  printf("Direction: %d\n", bDir);
 
+  // YELLOW
+  uint8_t yData[10] = {0x0A};
+  yData[0] = 0xA8;
+  ret = HAL_I2C_Master_Transmit(&hi2c2, SAD_A_W, &yData[0], 1, 1000);
+  ret = HAL_I2C_Master_Receive(&hi2c2, SAD_A_R, &yData[0], 6, 1000);
 
+  yRx = ((int16_t)(yData[1] << 8) + (int16_t)yData[0]);
+  yRy = ((int16_t)(yData[3] << 8) + (int16_t)yData[2]);
+  yRz = ((int16_t)(yData[5] << 8) + (int16_t)yData[4]);
 
+  yDir = IMU_Direction(yRx);
 
-
-
-
-
-
-
-
-uint8_t find_direction(int16_t x){
-
-
-
-	uint8_t direction = 3;
-
-
-
-	if (x > 3000){ // left
-
-
-
-		direction = 0;
-
-
-
-		return direction;
-
-
-
-	}
-
-
-
-	else if (x < -3000){ // right
-
-		direction = 1;
-
-		return direction;
-
-	}
-
-
-
-	else { // straight
-
-		direction = 2;
-
-		return direction;
-
-	}
-
-
-
+//  #ifdef DEBUG
+ // printf("DEBUG: B D=%d X=%d  Y D=%d X=%d\r\n", bDir, bRx, yDir, yRx);
+//  #endif
 }
 
-
-
-uint16_t create_packet(uint8_t mode, uint8_t speed, uint8_t kick){
-
-	uint16_t packet = 0;
-
-
-
-	packet = (mode << 14) | (speed << 7) | (kick << 6);
-
-
-
-	return packet;
-
+int Flex_Magnitude(uint32_t x)
+{
+	// fancy logic to get flex magnitude
+	return 0;
 }
 
+void Flex_Read(void)
+{
+
+  // BLUE SPEED FLEX SENSOR
+  HAL_ADC_Start(&hadc1);
+  bFlexRaw1 = HAL_ADC_GetValue(&hadc1);
+  bFlexRaw1 = ((bFlexRaw1 * 100) / ADC_MAX_VALUE);
+  bMag = bFlexRaw1;
+  printf("Blue speed: %d\n", bMag);
+  HAL_Delay(50);
 
 
+  // BLUE BOOST FLEX SENSOR
+  HAL_ADC_Start(&hadc1);
+  bFlexRaw2 = HAL_ADC_GetValue(&hadc1);
+  bFlexRaw2 = ((bFlexRaw2 * 100) / ADC_MAX_VALUE);
+  bBoost = bFlexRaw2;
+  printf("Blue boost: %d\n", bBoost);
+  HAL_Delay(50);
 
 
+  // YELLOW SPEED FLEX SENSOR
+  HAL_ADC_Start(&hadc1);
+  yFlexRaw1 = HAL_ADC_GetValue(&hadc1);
+  yFlexRaw1 = ((yFlexRaw1 * 100) / ADC_MAX_VALUE);
+  yMag = yFlexRaw1;
+  printf("Yellow speed: %d\n", yMag);
+  HAL_Delay(50);
+
+  // YELLOW BOOST FLEX SENSOR
+  HAL_ADC_Start(&hadc1);
+  yFlexRaw2 = HAL_ADC_GetValue(&hadc1);
+  yFlexRaw2 = ((bFlexRaw2 * 100) / ADC_MAX_VALUE);
+  yMag = bFlexRaw2;
+  printf("Yellow boost: %d\n", yBoost);
+  HAL_Delay(50);
 
 
+  // TEST WITH SCALING
+  if (bFlexRaw1 < RAW_MIN) bFlexRaw1 = RAW_MIN;
+  if (bFlexRaw1 > RAW_MAX) bFlexRaw1 = RAW_MAX;
+
+
+  bFlexRaw1 = ((bFlexRaw1 - RAW_MIN) * (SCALE_MAX - SCALE_MIN)) / (RAW_MAX - RAW_MIN) + SCALE_MIN;
+
+  // TODO CALIBRATE FOR THIS SETUP
+
+  //printf("Blue speed: %d\n", bMag);
+
+//  #ifdef DEBUG
+//  #endif
+}
+
+/*void readAverage(void){
+	double sumB = 0;
+	for(int i = 0; i < 5; i++){
+		sumB += Flex_Read();
+	}
+	sumB /= 5;
+	int truncate = (int)sumB;
+	truncate -= 42;
+	bMag = truncate;
+	printf("DEBUG B F=%d Y F=%d\r\n", truncate, yFlexRaw);
+}*/
+void Pixy_read(void){
+	if (HAL_UART_Receive(&huart5, &Pixy_receive, 1, 500) == HAL_OK){
+		uint8_t value = Pixy_receive & 0x03;
+			if (value == 1){
+				bDir = 3;
+			}
+			else if (value == 2){
+				yDir = 3;
+			}
+	}
+}
+void boostSensor(void){
+	if (bBoost == 1){
+		bMag += 10;
+	}
+	if (yBoost == 1){
+		yMag += 10;
+	}
+}
 /* USER CODE END 0 */
 
 /**
@@ -265,12 +258,6 @@ int main(void)
 
   /* USER CODE BEGIN 1 */
 
-
-
-
-
-
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -280,8 +267,6 @@ int main(void)
 
   /* USER CODE BEGIN Init */
 
-
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -289,92 +274,20 @@ int main(void)
 
   /* USER CODE BEGIN SysInit */
 
-
-
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_ADC1_Init();
-  MX_I2C1_Init();
   MX_LPUART1_UART_Init();
+  MX_I2C1_Init();
   MX_I2C2_Init();
-  MX_UART5_Init();
+  MX_ADC1_Init();
   MX_USART2_UART_Init();
+  MX_USART3_UART_Init();
+  MX_UART5_Init();
   /* USER CODE BEGIN 2 */
-
-  // first Glove Configurations
-
-  uint8_t buf[10]= {0x0A};//IRA_REG_M returns 0x48
-
-  buf[0] = 0x20; //addr=0x20
-
-
-
-  buf[1] = 0x97;
-
-
-
-  int ret = HAL_I2C_Master_Transmit(&hi2c1, SAD_A_W, &buf[0], 2, 1000);
-
-
-
-  int16_t x, y, z;
-
-  uint8_t direction = 3;
-
-  uint32_t adc_value = 0; // raw input
-
-  uint8_t sensor_value = 0; // 1-100
-
-  uint16_t flex_value = 0;
-
-
-
-  // second Glove Configurations
-
-
-
-  uint8_t buf2[10] = {0x0A};
-
-  buf2[0] = 0x20;
-
-  buf2[1] = 0x97;
-
-
-
-  int ret2 = HAL_I2C_Master_Transmit(&hi2c2, SAD_A_W, &buf2[0], 2, 1000);
-
-
-
-  int16_t x2, y2, z2;
-
-  uint8_t direction2 = 3;
-
-  uint32_t adc_value2 = 0;
-
-  uint8_t sensor_value2 = 0;
-
-  uint16_t flex_value2 = 0;
-
-
-
-  uint8_t celeb_blue = 0;
-
-  uint8_t celeb_yellow = 0;
-
-
-  // bluetooth test
-
-  uint16_t packet_test = 0;
-
-
-
-
-
-
-
-
+  IMU_Init();
+  // HAL_ADC_Start(&hadc1);
 
 
 
@@ -382,271 +295,31 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
-
   while (1)
-
   {
+	  IMU_Read();
+	  //readAverage();
+	  Flex_Read();
+	  Pixy_read();
 
-	  // interrupt variables -> reset every loop
 
+	char txBuf[20];
+	 //bDir = 3;
+	 //bMag = 25;
+	 //bKick = 0;
 
 
-	  uint8_t mode_blue = 0;
+	 //printf("DEBUG B F=%d Y F=%d\r\n", bFlexRaw, yFlexRaw);
 
-	  uint8_t mode_yellow = 0;
 
-	  uint8_t speed_blue = 0;
+	sprintf(txBuf, "%d,%d,%d\r\n", bDir, bMag, bBoost);
 
-	  uint8_t speed_yellow = 0;
-
-	  uint8_t kick_blue = 0;
-
-	  uint8_t kick_yellow = 0;
-
-
-
-
-
-
-
-	  HAL_Delay(500);
-
-
-
-	  // x
-
-	  // FIRST GLOVE
-
-	  buf[0] = 0xA8; //addr=0x28
-
-
-
-	  ret = HAL_I2C_Master_Transmit(&hi2c1, SAD_A_W, &buf[0], 1, 1000);
-
-
-
-	  ret = HAL_I2C_Master_Receive(&hi2c1, SAD_A_R, &buf[0], 6, 1000);
-
-
-
-	  x = ((int16_t)buf[1] << 8) + (int16_t)buf[0];
-
-
-
-	  y = ((int16_t)(buf[3]) << 8) + (int16_t)buf[2];
-
-
-
-	  z = ((int16_t)buf[5] << 8) + (int16_t)buf[4];
-
-
-
-
-
-
-
-	   printf("x: %d, %.2f Ga\n", x, (float)x / 15844);
-
-
-
-	   printf("y: %d, %.2f Ga\n", y, (float)y / 15844);
-
-
-
-	   printf("z %d, %.2f Ga\n", z, (float)z / 15844);
-
-
-
-
-
-	   HAL_ADC_Start(&hadc1); // Start ADC in continuous mode
-
-	    adc_value = HAL_ADC_GetValue(&hadc1);
-
-
-
-	    printf("raw value: %d\n", adc_value);
-
-
-
-	    flex_value = map_adc_to_flex_value(adc_value);
-
-	    // flex_value = refine_value(flex_value);
-
-
-
-	    direction = find_direction(x);
-
-
-
-
-
-
-
-	    printf("Direction: %d\n", direction);
-
-
-
-	    printf("Duty Cycle Percent: %d\n", flex_value);
-
-
-
-	   // SECOND GLOVE
-
-
-
-	    buf2[0] = 0xA8; //addr=0x28
-
-
-
-	    	  ret2 = HAL_I2C_Master_Transmit(&hi2c2, SAD_A_W, &buf2[0], 1, 1000);
-
-
-
-	    	  ret2 = HAL_I2C_Master_Receive(&hi2c2, SAD_A_R, &buf2[0], 6, 1000);
-
-
-
-	    	  x2 = ((int16_t)buf2[1] << 8) + (int16_t)buf2[0];
-
-
-
-	    	  y2 = ((int16_t)(buf2[3]) << 8) + (int16_t)buf2[2];
-
-
-
-	    	  z2 = ((int16_t)buf2[5] << 8) + (int16_t)buf2[4];
-
-
-
-	    	  printf("x2: %d, %.2f Ga\n", x2, (float)x2 / 15844);
-
-
-
-	    	  printf("y2: %d, %.2f Ga\n", y2, (float)y2 / 15844);
-
-
-
-	    	  printf("z2: %d, %.2f Ga\n", z2, (float)z2 / 15844);
-
-
-
-	    	// HAL_ADC_Start(&hadc1);
-
-	   	    //adc_value2 = HAL_ADC_GetValue(&hadc1);
-
-
-
-	   	// printf("raw value: %d\n", adc_value2);
-
-
-
-	   	 	    //flex_value2 = map_adc_to_flex_value(adc_value2);
-
-	   	 	    // flex_value2 = refine_value(flex_value2);
-
-
-
-	   	 	//    direction2 = find_direction(x2);
-
-
-
-	   		 //   printf("Direction: %d\n", direction2);
-
-
-
-	   		   // printf("Duty Cycle Percent: %d\n", flex_value2);
-
-
-
-	   	// TODO: Test second glove and figure out how to simplify circuit design.
-
-
-
-
-
-
-
-	   	// Form packet to be ready to send:
-
-
-
-	   		    speed_blue = adc_value;
-
-	   		    speed_yellow = adc_value2;
-
-
-
-	   		    mode_blue = direction;
-
-	   		    mode_yellow = direction2;
-
-
-
-	   		    kick_blue = 1; //placeholder for now
-
-	   		    kick_yellow = 1; //placeholder for now
-
-
-
-	   		    if (celeb_blue == 1){
-
-	   		    	mode_blue = 3;
-
-	   		    }
-
-	   		    if (celeb_yellow == 1){
-
-	   		    	mode_yellow = 3;
-
-	   		    }
-
-
-
-
-
-	   		    uint16_t packet_blue = create_packet(mode_blue ,speed_blue, kick_blue);
-
-
-
-	   		    uint16_t packet_yellow = create_packet(mode_yellow, speed_yellow, kick_yellow);
-
-
-
-
-
-	   		   uint8_t blue_buffer[2] = {(uint8_t)(packet_blue >> 8), (uint8_t)(packet_blue & 0xFF)};
-
-	   		   uint8_t yellow_buffer[2] = {(uint8_t)(packet_yellow >> 8), (uint8_t)(packet_yellow & 0xFF)};
-
-
-
-
-	   		   if (packet_test == 2){
-	   			   packet_test = 0;
-	   		   }
-	   		   else {
-	   			   packet_test++;
-	   		   }
-
-	   		HAL_UART_Transmit(&huart2, packet_test, 2, 100);
-	   		// Send blue packet
-
-	   		  // HAL_UART_Transmit(&huart2, blue_buffer, 2, 100);
-
-
-	   		HAL_Delay(5000);
-	   		// Send yellow packet
-
-	   		  // HAL_UART_Transmit(&huart2, yellow_buffer, 2, 100);
-
-
+	HAL_UART_Transmit(&huart3, (uint8_t*)txBuf, strlen(txBuf), 100);
+	HAL_Delay(250);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-
   }
-
   /* USER CODE END 3 */
 }
 
@@ -704,15 +377,11 @@ static void MX_ADC1_Init(void)
 
   /* USER CODE BEGIN ADC1_Init 0 */
 
-
-
   /* USER CODE END ADC1_Init 0 */
 
   ADC_ChannelConfTypeDef sConfig = {0};
 
   /* USER CODE BEGIN ADC1_Init 1 */
-
-
 
   /* USER CODE END ADC1_Init 1 */
 
@@ -722,11 +391,11 @@ static void MX_ADC1_Init(void)
   hadc1.Init.ClockPrescaler = ADC_CLOCK_ASYNC_DIV32;
   hadc1.Init.Resolution = ADC_RESOLUTION_12B;
   hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
-  hadc1.Init.ScanConvMode = ADC_SCAN_DISABLE;
+  hadc1.Init.ScanConvMode = ADC_SCAN_ENABLE;
   hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
   hadc1.Init.LowPowerAutoWait = DISABLE;
-  hadc1.Init.ContinuousConvMode = ENABLE;
-  hadc1.Init.NbrOfConversion = 1;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.NbrOfConversion = 4;
   hadc1.Init.DiscontinuousConvMode = DISABLE;
   hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
   hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
@@ -740,7 +409,7 @@ static void MX_ADC1_Init(void)
 
   /** Configure Regular Channel
   */
-  sConfig.Channel = ADC_CHANNEL_8;
+  sConfig.Channel = ADC_CHANNEL_1;
   sConfig.Rank = ADC_REGULAR_RANK_1;
   sConfig.SamplingTime = ADC_SAMPLETIME_640CYCLES_5;
   sConfig.SingleDiff = ADC_SINGLE_ENDED;
@@ -750,9 +419,34 @@ static void MX_ADC1_Init(void)
   {
     Error_Handler();
   }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_8;
+  sConfig.Rank = ADC_REGULAR_RANK_2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_2;
+  sConfig.Rank = ADC_REGULAR_RANK_3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure Regular Channel
+  */
+  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Rank = ADC_REGULAR_RANK_4;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
   /* USER CODE BEGIN ADC1_Init 2 */
-
-
 
   /* USER CODE END ADC1_Init 2 */
 
@@ -768,13 +462,9 @@ static void MX_I2C1_Init(void)
 
   /* USER CODE BEGIN I2C1_Init 0 */
 
-
-
   /* USER CODE END I2C1_Init 0 */
 
   /* USER CODE BEGIN I2C1_Init 1 */
-
-
 
   /* USER CODE END I2C1_Init 1 */
   hi2c1.Instance = I2C1;
@@ -806,8 +496,6 @@ static void MX_I2C1_Init(void)
   }
   /* USER CODE BEGIN I2C1_Init 2 */
 
-
-
   /* USER CODE END I2C1_Init 2 */
 
 }
@@ -822,13 +510,9 @@ static void MX_I2C2_Init(void)
 
   /* USER CODE BEGIN I2C2_Init 0 */
 
-
-
   /* USER CODE END I2C2_Init 0 */
 
   /* USER CODE BEGIN I2C2_Init 1 */
-
-
 
   /* USER CODE END I2C2_Init 1 */
   hi2c2.Instance = I2C2;
@@ -860,8 +544,6 @@ static void MX_I2C2_Init(void)
   }
   /* USER CODE BEGIN I2C2_Init 2 */
 
-
-
   /* USER CODE END I2C2_Init 2 */
 
 }
@@ -876,13 +558,9 @@ static void MX_LPUART1_UART_Init(void)
 
   /* USER CODE BEGIN LPUART1_Init 0 */
 
-
-
   /* USER CODE END LPUART1_Init 0 */
 
   /* USER CODE BEGIN LPUART1_Init 1 */
-
-
 
   /* USER CODE END LPUART1_Init 1 */
   hlpuart1.Instance = LPUART1;
@@ -914,8 +592,6 @@ static void MX_LPUART1_UART_Init(void)
   }
   /* USER CODE BEGIN LPUART1_Init 2 */
 
-
-
   /* USER CODE END LPUART1_Init 2 */
 
 }
@@ -936,7 +612,7 @@ static void MX_UART5_Init(void)
 
   /* USER CODE END UART5_Init 1 */
   huart5.Instance = UART5;
-  huart5.Init.BaudRate = 115200;
+  huart5.Init.BaudRate = 9600;
   huart5.Init.WordLength = UART_WORDLENGTH_8B;
   huart5.Init.StopBits = UART_STOPBITS_1;
   huart5.Init.Parity = UART_PARITY_NONE;
@@ -1017,6 +693,54 @@ static void MX_USART2_UART_Init(void)
 }
 
 /**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 9600;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
+  huart3.Init.ClockPrescaler = UART_PRESCALER_DIV1;
+  huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetTxFifoThreshold(&huart3, UART_TXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_SetRxFifoThreshold(&huart3, UART_RXFIFO_THRESHOLD_1_8) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_UARTEx_DisableFifoMode(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -1026,218 +750,79 @@ static void MX_GPIO_Init(void)
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
 
-
-
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
-  __HAL_RCC_GPIOF_CLK_ENABLE();
   __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-  __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
   HAL_PWREx_EnableVddIO2();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
 
-  /*Configure GPIO pins : PE2 PE3 */
-  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_3;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, LD3_Pin|LD2_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(USB_PowerSwitchOn_GPIO_Port, USB_PowerSwitchOn_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : B1_Pin */
+  GPIO_InitStruct.Pin = B1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_RISING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LD3_Pin LD2_Pin */
+  GPIO_InitStruct.Pin = LD3_Pin|LD2_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF13_SAI1;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PF7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF13_SAI1;
-  HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PA0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PA4 PA5 PA6 PA7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5|GPIO_PIN_6|GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF5_SPI1;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB2 PB6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_2|GPIO_PIN_6;
-  GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
+  /*Configure GPIO pin : USB_OverCurrent_Pin */
+  GPIO_InitStruct.Pin = USB_OverCurrent_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(USB_OverCurrent_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PE7 PE8 PE9 PE10
-                           PE11 PE12 PE13 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7|GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10
-                          |GPIO_PIN_11|GPIO_PIN_12|GPIO_PIN_13;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
+  /*Configure GPIO pin : USB_PowerSwitchOn_Pin */
+  GPIO_InitStruct.Pin = USB_PowerSwitchOn_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM1;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+  HAL_GPIO_Init(USB_PowerSwitchOn_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PE14 PE15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_14|GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF3_TIM1_COMP1;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_10;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF1_TIM2;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PB12 PB13 PB15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13|GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF13_SAI2;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PB14 */
-  GPIO_InitStruct.Pin = GPIO_PIN_14;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF14_TIM15;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PD8 PD9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF7_USART3;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PD14 PD15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_14|GPIO_PIN_15;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PC6 */
-  GPIO_InitStruct.Pin = GPIO_PIN_6;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF13_SAI2;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PC7 */
-  GPIO_InitStruct.Pin = GPIO_PIN_7;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF2_TIM3;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PC8 PC9 PC10 PC11 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9|GPIO_PIN_10|GPIO_PIN_11;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF12_SDMMC1;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PA8 PA10 */
-  GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_10;
+  /*Configure GPIO pins : USB_SOF_Pin USB_ID_Pin USB_DM_Pin USB_DP_Pin */
+  GPIO_InitStruct.Pin = USB_SOF_Pin|USB_ID_Pin|USB_DM_Pin|USB_DP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   GPIO_InitStruct.Alternate = GPIO_AF10_OTG_FS;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : PA9 */
-  GPIO_InitStruct.Pin = GPIO_PIN_9;
+  /*Configure GPIO pin : USB_VBUS_Pin */
+  GPIO_InitStruct.Pin = USB_VBUS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PD0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF9_CAN1;
-  HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
-
-  /*Configure GPIO pins : PB3 PB4 PB5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_4|GPIO_PIN_5;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  GPIO_InitStruct.Alternate = GPIO_AF6_SPI3;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : PE0 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0;
-  GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  GPIO_InitStruct.Alternate = GPIO_AF2_TIM4;
-  HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
+  HAL_GPIO_Init(USB_VBUS_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
-
 
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
 /* USER CODE BEGIN 4 */
-
 #ifdef __GNUC__
-
 #define PUTCHAR_PROTOTYPE int __io_putchar(int ch)
-
 #else
-
   #define PUTCHAR_PROTOTYPE int fputc(int ch, FILE *f)
-
 #endif /* __GNUC__ */
-
 PUTCHAR_PROTOTYPE
-
 {
-
   HAL_UART_Transmit(&hlpuart1, (uint8_t *)&ch, 1, 0xFFFF);
-
   return ch;
-
 }
-
-
-
 /* USER CODE END 4 */
 
 /**
@@ -1247,17 +832,11 @@ PUTCHAR_PROTOTYPE
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-
   /* User can add his own implementation to report the HAL error return state */
-
   __disable_irq();
-
   while (1)
-
   {
-
   }
-
   /* USER CODE END Error_Handler_Debug */
 }
 
@@ -1272,11 +851,8 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-
   /* User can add his own implementation to report the file name and line number,
-
      ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
